@@ -1,0 +1,72 @@
+#!/bin/bash
+mkdir -p /opt/bkc/curent_conf
+cp /home/bkc_admin/2/* /opt/bkc/curent_conf
+cp /opt/bkc/curent_conf/bkc-domain-join /usr/bin/
+chmod 775 /usr/bin/bkc-domain-join
+apt -y update && apt -y upgrade
+apt -y install krb5-config winbind libpam-winbind libnss-winbind krb5-config samba-dsdb-modules samba-vfs-modules openssh-server libpam-mount cifs-utils net-tools
+systemctl enable ssh
+#SSH open key
+KEY='ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC6s/fKLBG9eY1XMNvfy0xqEPHCwO07ThVHdGcMpAURFHweBVgjHLnRNtP56KDvOJGI7PRqjnsEqhinjTwCSc7Wkz9KI7HJQvDVbnlZrICAFRgnoPC5zQXw6nVnaSpwD4R/10MoznMzI6/R8ktRmo4RtuIWa69J2tFYJ+PEl6clX0Qw/7Z7r486gZxhodqaZdYvdUmOgdVJJ3d4t9myFw2FmcbniD5F/Pmcb05CVkM+2iMBX4dM379bHtjuPS2pOE7vPfSS4qjOMaMrk8I50wnPxg065l/3NFVBoGpuiJsdsooxmRS4GrwfYATICVnHAy7IuuwSmU4wOu1qBYdmxtc9 rzsidametov@bkc211'
+FILE='/root/.ssh/authorized_keys'
+DIR='/root/.ssh'
+if ! [ -d $DIR ]; then
+        mkdir $DIR && echo "$KEY" >> $FILE
+else
+        if ! [ -f $FILE ]; then
+        echo "$KEY" >> $FILE
+        else
+        grep -qxF "$KEY" $FILE || echo "$KEY" >> $FILE
+        fi
+fi
+#Изменение конфигурации Netplan
+dirrecroty=$(ls /etc/netplan/)
+#вычисление имени сетевого адаптера
+ext_interface () {
+    for interface in /sys/class/net/*
+    do
+        [[ "${interface##*/}" != 'lo' ]] && \
+           ping -c1 -W2 -I "${interface##*/}" 208.67.222.222 >/dev/null 2>&1 && \
+                printf '%s' "${interface##*/}" && return 0
+    done
+}
+interface=$(ext_interface)
+
+#переменная с именем файла
+count=$(basename /etc/netplan/*)
+#-----------------------------------------------------------------------------
+#условие на существование файла настройки сети и приведение его к единому виду
+if test -n "$(find /etc/netplan/ -maxdepth 0 -empty)"; then
+    touch /etc/netplan/01-netcfg.yaml
+    echo -e 'network:\n   version: 2\n   renderer: NetworkManager\n   ethernets:\n     '$interface':\n       dhcp4: yes\n       nameservers:\n         addresses: [192.168.20.1, 192.168.224.20]' >> /etc/netplan/01-netcfg.yaml
+else
+    echo -n > /etc/netplan/$count
+    echo -e 'network:\n   version: 2\n   renderer: NetworkManager\n   ethernets:\n     '$interface':\n       dhcp4: yes\n       nameservers:\n         addresses: [192.168.20.1, 192.168.224.20]' >> /etc/netplan/$count
+fi
+#-----------------------------------------------------------------------------
+netplan apply
+
+mv /etc/nsswitch.conf /opt/bkc/curent_conf/nsswitch.bk
+cp -f /opt/bkc/curent_conf/nsswitch.conf /etc/
+
+mv /etc/resolv.conf /opt/bkc/curent_conf/resovl.bk
+cp -f /opt/bkc/curent_conf/resolv.conf /etc/
+
+mv /etc/samba/smb.conf /opt/bkc/curent_conf/smb.bk
+cp -f /opt/bkc/curent_conf/smb.conf /etc/samba/
+
+mv /etc/security/pam_mount.conf.xml /opt/bkc/curent_conf/pam_mount.conf.bk
+cp -f /opt/bkc/curent_conf/pam_mount.conf.xml /etc/security/
+
+mv /etc/pam.d/common-auth /opt/bkc/curent_conf/common-auth.bk
+cp -f /opt/bkc/curent_conf/common-auth /etc/pam.d/
+
+hide='HideUsers=bkc_admin,nobody'
+adm='%domain\ admins ALL=(ALL:ALL) ALL'
+if ! grep -q "$hide" /etc/sddm.conf.d/kde_settings.conf; then
+        echo $hide >> /etc/sddm.conf.d/kde_settings.conf
+fi
+if ! grep -q "$adm" /etc/sudoers ; then
+       echo $adm >> /etc/sudoers
+fi
+dpkg-reconfigure krb5-config
